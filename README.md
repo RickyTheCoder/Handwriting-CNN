@@ -1,1 +1,1 @@
-# Handwriting-CNN
+# Handwriting into Digital Information
