@@ -32,10 +32,6 @@ transform = transforms.Compose([
   TransposeTransform()
   ])
 
-
-
-
-
 class CNN(nn.Module):
     # depending on the split of the EMNIST database, set 'num_classes' to expected outputs
     # since we're doing digits, No.Classes is 10
@@ -47,34 +43,46 @@ class CNN(nn.Module):
     self.loss_history = []
     self.acc_history = []
     self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    print(f"Using device: {self.device}")  # Confirm if using GPU or CPU
       # feel free to adjust the convolutional layers, learning rate, batch sizes, epochs
-      # convolutional layer (32 filters of 3x3)
+      # convolutional layer (32 filters of 3x3) with BathNorm and ReLU
     self.conv1 = nn.Conv2d(1, 32, 3)
       # batch normalization 
     self.bn1 = nn.BatchNorm2d(32)
       # another conv layer 
+
     self.conv2 = nn.Conv2d(32, 32, 3)
       # more batch normalization 
     self.bn2 = nn.BatchNorm2d(32)
+
     self.conv3 = nn.Conv2d(32, 32, 3)
     self.bn3 = nn.BatchNorm2d(32)
       # max pooling 
+
     self.maxpool1 = nn.MaxPool2d(2)
+
     self.conv4 = nn.Conv2d(32, 64, 3)
     self.bn4 = nn.BatchNorm2d(64)
+
     self.conv5 = nn.Conv2d(64, 64, 3)
     self.bn5 = nn.BatchNorm2d(64)
+
     self.conv6 = nn.Conv2d(64, 64, 3)
     self.bn6 = nn.BatchNorm2d(64)
-    self.maxpool2 = nn.MaxPool2d(2)
 
+    self.maxpool2 = nn.MaxPool2d(2)
+    # Dropout helps reduce overfitting 
+    self.dropout = nn.Dropout(0.3)
+    
     input_dims = self.calc_input_dims()
       
     # fed into a linear layer set (dealing with 10 digits)
     self.fc1 = nn.Linear(input_dims, self.num_classes)
     # Adam optimizer (glorified gradient descent) automatically adjusts the learning rate in 
     # terms of momentum 
-    self.optimizer = optim.Adam(self.parameters(), lr=self.lr)
+    # Changed optimizer to AdamW for better regularization (adds weight decay regularization)
+    self.optimizer = optim.AdamW(self.parameters(), lr=self.lr, weight_decay=1e-4)
+    self.scheduler = optim.lr_scheduler.StepLR(self.optimizer, step_size=5, gamma=0.5)  # LR scheduler
 
     self.loss = nn.CrossEntropyLoss()
       # mean squared error (goal is to minimize this)
@@ -82,57 +90,38 @@ class CNN(nn.Module):
     self.get_data()
 
   def calc_input_dims(self):
-    batch_data = torch.zeros((1, 1, 28, 28))
-    batch_data = self.conv1(batch_data)
-    #batch_data = self.bn1(batch_data)
-    batch_data = self.conv2(batch_data)
-    #batch_data = self.bn2(batch_data)
-    batch_data = self.conv3(batch_data)
-
-    batch_data = self.maxpool1(batch_data)
-    batch_data = self.conv4(batch_data)
-    batch_data = self.conv5(batch_data)
-    batch_data = self.conv6(batch_data)
-    batch_data = self.maxpool2(batch_data)
-
+    with torch.no_grad():
+      batch_data = torch.zeros((1, 1, 28, 28))
+      batch_data = self.conv1(batch_data)
+      #batch_data = self.bn1(batch_data)
+      batch_data = self.conv2(batch_data)
+      #batch_data = self.bn2(batch_data)
+      batch_data = self.conv3(batch_data)
+      batch_data = self.maxpool1(batch_data)
+      batch_data = self.conv4(batch_data)
+      batch_data = self.conv5(batch_data)
+      batch_data = self.conv6(batch_data)
+      batch_data = self.maxpool2(batch_data)
     return int(np.prod(batch_data.size()))
 
   def forward(self, batch_data):
-    batch_data = torch.tensor(batch_data).to(self.device)
+    batch_data = batch_data.to(self.device)
 
-    batch_data = self.conv1(batch_data)
-    batch_data = self.bn1(batch_data)
-    batch_data = F.relu(batch_data)
-
-    batch_data = self.conv2(batch_data)
-    batch_data = self.bn2(batch_data)
-    batch_data = F.relu(batch_data)
-
-    batch_data = self.conv3(batch_data)
-    batch_data = self.bn3(batch_data)
-    batch_data = F.relu(batch_data)
-
+    batch_data = F.relu(self.bn1(self.conv1(batch_data)))
+    batch_data = F.relu(self.bn2(self.conv2(batch_data)))
+    batch_data = self.dropout(F.relu(self.bn3(self.conv3(batch_data))))
     batch_data = self.maxpool1(batch_data)
 
-    batch_data = self.conv4(batch_data)
-    batch_data = self.bn4(batch_data)
-    batch_data = F.relu(batch_data)
-
-    batch_data = self.conv5(batch_data)
-    batch_data = self.bn5(batch_data)
-    batch_data = F.relu(batch_data)
-
-    batch_data = self.conv6(batch_data)
-    batch_data = self.bn6(batch_data)
-    batch_data = F.relu(batch_data)
-
+    batch_data = F.relu(self.bn4(self.conv4(batch_data)))
+    batch_data = F.relu(self.bn5(self.conv5(batch_data)))
+    batch_data = self.dropout(F.relu(self.bn6(self.conv6(batch_data))))
     batch_data = self.maxpool2(batch_data)
 
-    batch_data = batch_data.view(batch_data.size()[0], -1)
-
-    classes = self.fc1(batch_data)
-
-    return classes
+    batch_data = batch_data.view(batch_data.size(0), -1)
+    output = self.fc1(batch_data)
+    return output
+    # dropout layers added after the 3rd and 6th convolution blocks to help reduce overfitting
+    # by randomly zeroing out some neuron activations during training 
 
 # Changed get_data function to train on EMNIST dataset
     
@@ -161,49 +150,46 @@ class CNN(nn.Module):
     for i in range(epochs):
       ep_loss = 0
       ep_acc = []
-      for j, (input, label) in enumerate(self.train_data_loader):
-        self.optimizer.zero_grad()
-        label = label.to(self.device)
-        prediction = self.forward(input)
-        loss = self.loss(prediction, label)
-        prediction = F.softmax(prediction, dim=1)
-        classes = torch.argmax(prediction, dim=1)
-        wrong = torch.where(classes != label,
-                        torch.tensor([1.]).to(self.device),
-                        torch.tensor([0.]).to(self.device))
-        acc = 1 - torch.sum(wrong) / self.batch_size
+      for input, label in self.train_data_loader:
+          self.optimizer.zero_grad()
+          label = label.to(self.device)
+          prediction = self.forward(input)
+          loss = self.loss(prediction, label)
 
-        ep_acc.append(acc.item())
-        self.acc_history.append(acc.item())
-        ep_loss += loss.item()
-        loss.backward()
-        self.optimizer.step()
-      print('Finish epoch', i, 'total loss %.3f' % ep_loss,
-              'accuracy %.3f' % np.mean(ep_acc))
-      self.loss_history.append(ep_loss)
+          pred_labels = torch.argmax(F.softmax(prediction, dim=1), dim=1)
+          acc = (pred_labels == label).float().mean()
+          ep_acc.append(acc.item())
+
+          ep_loss += loss.item()
+          loss.backward()
+          self.optimizer.step()
+
+          self.scheduler.step()  # Decreases the learning rate every few epochs to help model converge better 
+          avg_loss = ep_loss / len(self.train_data_loader)
+          avg_acc = np.mean(ep_acc)
+          self.loss_history.append(avg_loss)
+          self.acc_history.append(avg_acc)
+          print(f"Epoch {i+1}: Loss = {avg_loss:.3f}, Accuracy = {avg_acc:.3f}")
 
   def _test(self):
     self.eval()
-
     ep_loss = 0
     ep_acc = []
-    for j, (input, label) in enumerate(self.test_data_loader):
-      label = label.to(self.device)
-      prediction = self.forward(input)
-      loss = self.loss(prediction, label)
-      prediction = F.softmax(prediction, dim=1)
-      classes = torch.argmax(prediction, dim=1)
-      wrong = torch.where(classes != label,
-                      torch.tensor([1.]).to(self.device),
-                      torch.tensor([0.]).to(self.device))
-      acc = 1 - torch.sum(wrong) / self.batch_size
+    with torch.no_grad(): #Prevents gradient calculations during testing and improves speed/reduces memory usage
+      for input, label in self.test_data_loader:
+        label = label.to(self.device)
+        prediction = self.forward(input)
+        loss = self.loss(prediction, label)
 
-      ep_acc.append(acc.item())
+        pred_labels = torch.argmax(F.softmax(prediction, dim=1), dim=1)
+        acc = (pred_labels == label).float().mean()
+        ep_acc.append(acc.item())
 
-      ep_loss += loss.item()
+        ep_loss += loss.item()
 
-    print('total loss %.3f' % ep_loss,
-                'accuracy %.3f' % np.mean(ep_acc))
+      avg_loss = ep_loss / len(self.test_data_loader)
+      avg_acc = np.mean(ep_acc)
+      print(f"Test Results: Loss = {avg_loss:.3f}, Accuracy = {avg_acc:.3f}")
 
 
 if __name__ == '__main__':
@@ -216,6 +202,10 @@ if __name__ == '__main__':
   #plt.plot(network.loss_history)
   #plt.show()
   #plt.plot(network.acc_history)
+  #plt.show()
+  print("It took {} seconds to train the network.".format(end-start))
+  network._test()
+
   #plt.show()
   print("It took {} seconds to train the network.".format(end-start))
   network._test()
