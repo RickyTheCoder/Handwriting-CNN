@@ -7,3 +7,6 @@ This project uses CNN(convolutional neural network) for OCR (optical character r
 - Drew Shulman
 - Evangelos Kobotis
 
+## Current Model Results:
+Trained using 10 epochs with an average of 0.86 accuracy and 2008.63 loss 
+![image](https://github.com/user-attachments/assets/f45a7a13-462d-436d-b325-cf5b43db84c4)
